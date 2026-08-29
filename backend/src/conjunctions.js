@@ -28,14 +28,17 @@ import { sendTelegramMessage } from "./telegram.js";
 const SCREEN_WINDOW_MINUTES = 5 * 60; // same look-ahead window the frontend uses
 const SPOTLIGHT_NORAD_IDS = [25544]; // ISS (ZARYA) — always scanned, watched or not
 
-// 400 timed out for real in production (FUNCTION_INVOCATION_TIMEOUT) once
-// active_alerts actually existed and its writes were doing real work
-// instead of failing instantly — the ~37ms/target figure was measured
-// locally, not on Vercel's actual (slower, shared) compute, and didn't
-// account for the extra active_alerts round trips. Cut with real margin
-// rather than tuned to the edge — better to rotate through the catalog a
-// bit slower than to risk timing out and silently skipping a whole cycle.
-const ROTATION_BATCH_SIZE = 150;
+// 400 timed out for real in production. 150 measured at 52.7s in
+// production for 151 targets (~349ms/target — nearly 9x the ~37ms/target
+// measured on local compute, which is what 400 and then 150 were both
+// wrongly sized from) — only ~7s under the 60s hard cap, not a safe
+// margin. This is sized from that real production rate instead:
+// 60 * ~349ms =~ 21s of scan time, leaving real headroom under 60s even
+// accounting for run-to-run variance (cold starts, catalog fetch, the
+// fixed active_alerts cleanup/expire queries). Better to rotate through
+// the catalog slower than to risk timing out and silently skipping an
+// entire cycle.
+const ROTATION_BATCH_SIZE = 60;
 // Matches update-tle-data.yml's own cadence — the rotation only actually
 // advances at the rate refresh is called, whatever this constant says.
 const SCAN_INTERVAL_MS = 2 * 60 * 60 * 1000;

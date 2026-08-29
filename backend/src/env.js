@@ -23,8 +23,14 @@ export const env = {
   // of POST /api/refresh — without this anyone could trigger a rescan.
   refreshSecret: required("REFRESH_SECRET"),
 
-  // The tle-data branch is public, so this is a plain, unauthenticated fetch.
+  // The tle-data branch is public, so this is a plain, unauthenticated
+  // fetch. This default must point at THIS repo's own tle-data branch —
+  // it was copy-pasted from a different repo (dheer-io/
+  // space-debris-collision-risk) for a while, which meant the backend was
+  // silently scanning a completely different project's satellite data than
+  // what the frontend deploys (deploy-pages.yml pulls from this repo's own
+  // tle-data via its local git remote, so it was never wrong the same way).
   tleDataUrl:
     process.env.TLE_DATA_URL ??
-    "https://raw.githubusercontent.com/dheer-io/space-debris-collision-risk/tle-data/data/raw/tle-latest.json",
+    "https://raw.githubusercontent.com/DlightSair/satellite_risk/tle-data/data/raw/tle-latest.json",
 };

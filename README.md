@@ -2,7 +2,6 @@
 
 **PS-04** — A browser-based dashboard for tracking satellites/debris and predicting close-approach collision risk from live orbital data, by Group 6Gs.
 
-https://dheer-io.github.io/space-debris-collision-risk/frontend/html_css/index.html
 
 ## Features
 

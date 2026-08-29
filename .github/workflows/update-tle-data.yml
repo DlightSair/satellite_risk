@@ -1,0 +1,75 @@
+name: Update TLE data
+
+on:
+  schedule:
+    # Every 2 hours (CelesTrak's own minimum poll interval), offset to :13
+    # instead of :00 — GitHub explicitly documents top-of-hour as the most
+    # congested time for scheduled workflows, where runs are most likely to
+    # be delayed or dropped. Scheduled triggers are best-effort, not
+    # guaranteed, so some runs will still be skipped, but this maximizes
+    # how many land close to on time.
+    - cron: "13 */2 * * *"
+  workflow_dispatch: # allows a manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write # needed to commit the refreshed data file to the tle-data branch
+  actions: write # needed to trigger the site redeploy workflow
+
+jobs:
+  fetch-tle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch latest TLE data
+        run: node backend/fetchTleData.js
+
+      # The data file is committed on its own orphan branch (tle-data),
+      # never on main, so amending + force-pushing it can never rewrite or
+      # drop any commit from main's history — the two histories are
+      # structurally disconnected.
+      - name: Commit updated data to tle-data branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          cp data/raw/tle-latest.json /tmp/tle-latest.json
+          rm -f data/raw/tle-latest.json
+
+          git fetch origin tle-data
+          git checkout tle-data
+
+          mkdir -p data/raw
+          cp /tmp/tle-latest.json data/raw/tle-latest.json
+          git add data/raw/tle-latest.json
+
+          if git diff --staged --quiet; then
+            echo "No data changes, skipping commit."
+            exit 0
+          fi
+
+          git commit --amend -m "Update TLE data"
+          git push --force origin tle-data
+
+      - name: Trigger site redeploy
+        run: gh workflow run deploy-pages.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tells the API to pull the data it just fetched, rescan every watched
+      # satellite, and send any new Telegram alerts. Skipped entirely if the
+      # backend isn't deployed yet (secret unset) so this workflow keeps
+      # working on its own either way.
+      - name: Trigger backend rescan
+        if: ${{ env.API_BASE_URL != '' }}
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "$API_BASE_URL/api/refresh" \
+            -H "x-refresh-secret: $REFRESH_SECRET"
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          REFRESH_SECRET: ${{ secrets.REFRESH_SECRET }}

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables / secrets
+.env
+
+# Node
+node_modules/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+notes.txt
+
+# Project data — everything under data/ is generated. tle-latest.json is
+# committed on the dedicated tle-data branch (see
+# .github/workflows/update-tle-data.yml), never on main, so it's fully
+# ignored here. conjunctions-latest.json is still tracked on main.
+data/raw/*
+data/processed/*
+!data/processed/conjunctions-latest.json

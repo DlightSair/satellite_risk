@@ -25,6 +25,17 @@ app.get("/", (req, res) => {
 
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
+// TEMPORARY — diagnosing why POST bodies aren't reaching Express in prod.
+// Remove once resolved.
+app.post("/api/debug-echo", (req, res) => {
+  res.json({
+    contentType: req.get("content-type"),
+    bodyType: typeof req.body,
+    body: req.body,
+    rawBodyPresent: typeof req.rawBody !== "undefined",
+  });
+});
+
 app.use("/api/satellites", satellitesRouter);
 app.use("/api/leaderboard", leaderboardRouter);
 app.use("/api/refresh", refreshRouter);

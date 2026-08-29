@@ -28,10 +28,14 @@ import { sendTelegramMessage } from "./telegram.js";
 const SCREEN_WINDOW_MINUTES = 5 * 60; // same look-ahead window the frontend uses
 const SPOTLIGHT_NORAD_IDS = [25544]; // ISS (ZARYA) — always scanned, watched or not
 
-// Sized from the measured ~37ms/target: 400 * 37ms =~ 15s of SGP4 work,
-// leaving plenty of the function's time budget for the TLE fetch and the
-// (now-batched, not per-target) Supabase round trips.
-const ROTATION_BATCH_SIZE = 400;
+// 400 timed out for real in production (FUNCTION_INVOCATION_TIMEOUT) once
+// active_alerts actually existed and its writes were doing real work
+// instead of failing instantly — the ~37ms/target figure was measured
+// locally, not on Vercel's actual (slower, shared) compute, and didn't
+// account for the extra active_alerts round trips. Cut with real margin
+// rather than tuned to the edge — better to rotate through the catalog a
+// bit slower than to risk timing out and silently skipping a whole cycle.
+const ROTATION_BATCH_SIZE = 150;
 // Matches update-tle-data.yml's own cadence — the rotation only actually
 // advances at the rate refresh is called, whatever this constant says.
 const SCAN_INTERVAL_MS = 2 * 60 * 60 * 1000;

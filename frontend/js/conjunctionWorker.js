@@ -1,25 +1,209 @@
 // Runs conjunction screening + risk scoring off the main thread, continuously,
 // so SGP4 work across ~19k objects never drops render frames.
 //
-// MODULE worker (`{type:"module"}`, see satelliteDisplay.js) so this can
-// `import` the exact same satellite.js version and conjunctionMath.js the
-// rest of the app uses, instead of maintaining a separate copy. This used to
-// be a classic worker pinned to satellite.js@4.1.3 (the last UMD build,
-// since importScripts() needs a non-module script) for Firefox <114
-// compatibility — but that pinned build silently returned NaN positions for
-// at least one real satellite (a fresh Starlink TLE) that the current
-// satellite.js version propagates fine, which meant this worker could report
-// "no risk" for a pair the backend and the globe's own rendering both
-// correctly flagged as critical. Module workers have been supported since
-// Firefox 114 (2023), the same bar the rest of this app already assumes.
-import {
-  createSatrec,
-  orbitalAltitudeBand,
-  altitudeBandsCouldOverlap,
-  findMinSeparation,
-  riskForDistanceKm,
-  CONJUNCTION_SCREEN_KM,
-} from "../../shared/conjunctionMath.js";
+// MODULE worker (`{type:"module"}`, see satelliteDisplay.js), but it can't
+// import shared/conjunctionMath.js directly: that file imports satellite.js
+// via the bare specifier "satellite.js", resolved through the browser's
+// <script type="importmap"> — and that import map does NOT reliably
+// propagate into module workers across real browsers (confirmed directly:
+// a worker importing "satellite.js" throws "Failed to resolve module
+// specifier", even though the exact same import works fine on the main
+// thread of the same page). A full URL import needs no import map at all,
+// so this loads satellite.js straight from the same CDN build the main
+// thread's import map points at (kept in sync by hand — see that entry in
+// index.html) and carries its own copy of the physics/scoring math that
+// touches satellite.js directly. This used to be a classic worker pinned to
+// satellite.js@4.1.3 (the last UMD build, for Firefox <114 compatibility)
+// — that pinned build silently returned NaN positions for at least one
+// real satellite, which is why this now tracks the same version everywhere
+// instead of a separately-pinned one.
+import * as satellite from "https://cdn.jsdelivr.net/npm/satellite.js@7.1.0/+esm";
+
+// --- Conjunction/risk math (kept in sync by hand with shared/conjunctionMath.js —
+// see the comment above for why this worker can't just import that file) ---
+
+function createSatrec(line1, line2) {
+  const satrec = satellite.twoline2satrec(line1, line2);
+  return satrec.error ? null : satrec;
+}
+
+function propagateEci(satrec, date) {
+  // propagate() itself can return null (sgp4 failure), not just a falsy
+  // position within an object — see shared/conjunctionMath.js's copy of
+  // this same fix for why the naive destructure crashes.
+  const result = satellite.propagate(satrec, date);
+  return result?.position || null; // decayed/invalid orbit
+}
+
+const EARTH_GM_KM3_S2 = 398600.4418; // standard gravitational parameter, km^3/s^2
+
+// Perigee/apogee from TLE elements alone — cheap first-pass filter (same one
+// CARA/Socrates use) that only ever rules pairs OUT, never wrongly excludes one.
+function orbitalAltitudeBand(satrec) {
+  const meanMotionRadPerSec = satrec.no / 60; // satellite.js stores `no` in rad/min
+  const semiMajorAxisKm = Math.cbrt(EARTH_GM_KM3_S2 / (meanMotionRadPerSec * meanMotionRadPerSec));
+  const eccentricity = satrec.ecco;
+  return {
+    perigeeKm: semiMajorAxisKm * (1 - eccentricity),
+    apogeeKm: semiMajorAxisKm * (1 + eccentricity),
+  };
+}
+
+function altitudeBandsCouldOverlap(bandA, bandB, marginKm) {
+  return bandA.apogeeKm + marginKm >= bandB.perigeeKm && bandB.apogeeKm + marginKm >= bandA.perigeeKm;
+}
+
+function separationKmAt(satrecA, satrecB, date) {
+  const posA = propagateEci(satrecA, date);
+  const posB = propagateEci(satrecB, date);
+  if (!posA || !posB) return null;
+  return Math.hypot(posA.x - posB.x, posA.y - posB.y, posA.z - posB.z);
+}
+
+function separationStateAt(satrecA, satrecB, date) {
+  const a = satellite.propagate(satrecA, date);
+  const b = satellite.propagate(satrecB, date);
+  if (!a || !b || !a.position || !b.position || !a.velocity || !b.velocity) return null;
+  return {
+    distanceKm: Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y, a.position.z - b.position.z),
+    relSpeedKms: Math.hypot(a.velocity.x - b.velocity.x, a.velocity.y - b.velocity.y, a.velocity.z - b.velocity.z),
+  };
+}
+
+const MAX_REL_ACCEL_KM_S2 = 0.02; // bounds relative accel between two orbiting objects
+const SCAN_RESOLUTION_KM = 10;
+const MIN_SCAN_STEP_S = 0.25;
+const MAX_SCAN_STEP_S = 600;
+
+function goldenSectionMin(fn, loS, hiS, iterations = 30) {
+  if (!(hiS > loS)) return null;
+  const invPhi = (Math.sqrt(5) - 1) / 2;
+  let a = loS;
+  let b = hiS;
+  let c = b - (b - a) * invPhi;
+  let d = a + (b - a) * invPhi;
+  let fc = fn(c) ?? Infinity;
+  let fd = fn(d) ?? Infinity;
+
+  for (let i = 0; i < iterations; i++) {
+    if (fc < fd) {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - (b - a) * invPhi;
+      fc = fn(c) ?? Infinity;
+    } else {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + (b - a) * invPhi;
+      fd = fn(d) ?? Infinity;
+    }
+  }
+
+  const value = Math.min(fc, fd);
+  return Number.isFinite(value) ? { atS: fc < fd ? c : d, value } : null;
+}
+
+// Minimum 3D separation over the window. Adaptive step (see conjunctionMath.js
+// for the full reasoning): step size is solved from d - (v*dt + 0.5*a*dt^2)
+// >= screenKm so a close approach can never hide inside a step.
+//
+// Each local dip is refined (golden-section) as soon as its bracket closes,
+// and REFINED values are what compete for the global minimum — not the raw
+// coarse samples. See shared/conjunctionMath.js's copy for the full
+// reasoning on why comparing raw samples across multiple dips can silently
+// pick a shallower, later dip over a real, deeper one.
+function findMinSeparation(satrecA, satrecB, fromDate, windowMinutes, screenKm = CONJUNCTION_SCREEN_KM) {
+  const baseMs = fromDate.getTime();
+  const totalS = windowMinutes * 60;
+  const distanceAtS = (s) => separationKmAt(satrecA, satrecB, new Date(baseMs + s * 1000));
+
+  let globalBestS = null;
+  let globalBestDistanceKm = Infinity;
+
+  let dipStartS = 0;
+  let dipBestS = null;
+  let dipBestDistanceKm = Infinity;
+  let dipTracking = false;
+  let prevS = 0;
+
+  function finalizeDip(dipEndS) {
+    if (dipBestS === null) return;
+    let value = dipBestDistanceKm;
+    let atS = dipBestS;
+    if (dipBestDistanceKm < screenKm + SCAN_RESOLUTION_KM) {
+      const refined = goldenSectionMin(distanceAtS, dipStartS, dipEndS);
+      if (refined && refined.value < value) {
+        value = refined.value;
+        atS = refined.atS;
+      }
+    }
+    if (value < globalBestDistanceKm) {
+      globalBestDistanceKm = value;
+      globalBestS = atS;
+    }
+    dipBestS = null;
+    dipBestDistanceKm = Infinity;
+  }
+
+  for (let t = 0; t <= totalS; ) {
+    const sample = separationStateAt(satrecA, satrecB, new Date(baseMs + t * 1000));
+
+    if (sample === null) {
+      if (dipTracking) {
+        finalizeDip(t);
+        dipTracking = false;
+      }
+      prevS = t;
+      t += MAX_SCAN_STEP_S;
+      continue;
+    }
+
+    if (sample.distanceKm < dipBestDistanceKm) {
+      dipBestDistanceKm = sample.distanceKm;
+      dipBestS = t;
+      if (!dipTracking) dipStartS = prevS;
+      dipTracking = true;
+    } else if (dipTracking) {
+      finalizeDip(t);
+      dipTracking = false;
+    }
+
+    const slackKm = Math.max(SCAN_RESOLUTION_KM, sample.distanceKm - screenKm);
+    const v = sample.relSpeedKms;
+    const stepS = (-v + Math.sqrt(v * v + 2 * MAX_REL_ACCEL_KM_S2 * slackKm)) / MAX_REL_ACCEL_KM_S2;
+
+    prevS = t;
+    t += Math.min(MAX_SCAN_STEP_S, Math.max(MIN_SCAN_STEP_S, stepS));
+  }
+
+  if (dipTracking) finalizeDip(totalS);
+
+  if (globalBestS === null) return null;
+
+  return { distanceKm: globalBestDistanceKm, atDate: new Date(baseMs + globalBestS * 1000) };
+}
+
+// Kept in sync by hand with conjunctionMath.js's copy — see that file for
+// why miss distance (not probability) is the scoring basis.
+const RISK_BANDS = [
+  { level: "critical", label: "Critical", maxKm: 0.5 },
+  { level: "high", label: "High", maxKm: 1 },
+  { level: "moderate", label: "Moderate", maxKm: 3 },
+  { level: "low", label: "Low", maxKm: 10 },
+];
+
+const CONJUNCTION_SCREEN_KM = RISK_BANDS[RISK_BANDS.length - 1].maxKm;
+
+// Below this, treat as a same-object data artifact (e.g. a station's modules
+// sharing near-identical TLEs under separate NORAD IDs), not a real conjunction.
+const MIN_REPORTABLE_KM = 0.2;
+
+function riskForDistanceKm(distanceKm) {
+  if (distanceKm < MIN_REPORTABLE_KM) return null;
+  return RISK_BANDS.find((band) => distanceKm <= band.maxKm) ?? null;
+}
 
 // --- Worker orchestration --------------------------------------------------
 //

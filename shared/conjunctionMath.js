@@ -102,40 +102,73 @@ function goldenSectionMin(fn, loS, hiS, iterations = 30) {
 // is solved from d - (v*dt + 0.5*a*dt^2) >= screenKm, so it's the longest
 // jump that provably can't hide a conjunction — big steps far away, tiny
 // steps when closing fast or already close.
+//
+// Each local dip is refined (golden-section) as soon as its bracket closes,
+// and REFINED values are what compete for the global minimum — not the raw
+// coarse samples. A fast, near-perpendicular crossing (two objects passing
+// at several km/s) can have a true minimum only a fraction of a second wide;
+// the coarse scan brackets it correctly but can land its raw samples several
+// km off the true bottom. With multiple dips in a 5h window (e.g. repeated
+// shell crossings between two satellites), an unrefined shallower dip that
+// got sampled closer to ITS true bottom could otherwise beat a much deeper
+// dip's under-sampled raw value and silently win the "best" comparison —
+// discarding a real critical conjunction in favor of a shallower, later one.
 export function findMinSeparation(satrecA, satrecB, fromDate, windowMinutes, screenKm = CONJUNCTION_SCREEN_KM) {
   const baseMs = fromDate.getTime();
   const totalS = windowMinutes * 60;
   const distanceAtS = (s) => separationKmAt(satrecA, satrecB, new Date(baseMs + s * 1000));
 
-  let bestS = null;
-  let bestDistanceKm = Infinity;
-  let bracketLoS = 0;
-  let bracketHiS = 0;
-  let bestIsLatest = false;
+  let globalBestS = null;
+  let globalBestDistanceKm = Infinity;
+
+  let dipStartS = 0;
+  let dipBestS = null;
+  let dipBestDistanceKm = Infinity;
+  let dipTracking = false;
   let prevS = 0;
+
+  // Only worth polishing dips actually near the reporting threshold.
+  function finalizeDip(dipEndS) {
+    if (dipBestS === null) return;
+    let value = dipBestDistanceKm;
+    let atS = dipBestS;
+    if (dipBestDistanceKm < screenKm + SCAN_RESOLUTION_KM) {
+      const refined = goldenSectionMin(distanceAtS, dipStartS, dipEndS);
+      if (refined && refined.value < value) {
+        value = refined.value;
+        atS = refined.atS;
+      }
+    }
+    if (value < globalBestDistanceKm) {
+      globalBestDistanceKm = value;
+      globalBestS = atS;
+    }
+    dipBestS = null;
+    dipBestDistanceKm = Infinity;
+  }
 
   for (let t = 0; t <= totalS; ) {
     const sample = separationStateAt(satrecA, satrecB, new Date(baseMs + t * 1000));
 
     if (sample === null) {
       // Propagation failed (decayed/unstable orbit) — fall back to a bounded step.
-      if (bestIsLatest) {
-        bracketHiS = t;
-        bestIsLatest = false;
+      if (dipTracking) {
+        finalizeDip(t);
+        dipTracking = false;
       }
       prevS = t;
       t += MAX_SCAN_STEP_S;
       continue;
     }
 
-    if (sample.distanceKm < bestDistanceKm) {
-      bestDistanceKm = sample.distanceKm;
-      bestS = t;
-      bracketLoS = prevS;
-      bestIsLatest = true;
-    } else if (bestIsLatest) {
-      bracketHiS = t;
-      bestIsLatest = false;
+    if (sample.distanceKm < dipBestDistanceKm) {
+      dipBestDistanceKm = sample.distanceKm;
+      dipBestS = t;
+      if (!dipTracking) dipStartS = prevS;
+      dipTracking = true;
+    } else if (dipTracking) {
+      finalizeDip(t);
+      dipTracking = false;
     }
 
     const slackKm = Math.max(SCAN_RESOLUTION_KM, sample.distanceKm - screenKm);
@@ -146,19 +179,11 @@ export function findMinSeparation(satrecA, satrecB, fromDate, windowMinutes, scr
     t += Math.min(MAX_SCAN_STEP_S, Math.max(MIN_SCAN_STEP_S, stepS));
   }
 
-  if (bestS === null) return null; // propagation failed at every sample
-  if (bestIsLatest) bracketHiS = totalS;
+  if (dipTracking) finalizeDip(totalS);
 
-  // Only worth polishing pairs actually near the reporting threshold.
-  if (bestDistanceKm < screenKm + SCAN_RESOLUTION_KM) {
-    const refined = goldenSectionMin(distanceAtS, bracketLoS, bracketHiS);
-    if (refined && refined.value < bestDistanceKm) {
-      bestDistanceKm = refined.value;
-      bestS = refined.atS;
-    }
-  }
+  if (globalBestS === null) return null; // propagation failed at every sample, or no dip ever tracked
 
-  return { distanceKm: bestDistanceKm, atDate: new Date(baseMs + bestS * 1000) };
+  return { distanceKm: globalBestDistanceKm, atDate: new Date(baseMs + globalBestS * 1000) };
 }
 
 // Miss-distance risk bands (nearest first). Real conjunction assessment

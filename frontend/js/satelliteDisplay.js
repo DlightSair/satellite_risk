@@ -79,9 +79,20 @@ export function initSatelliteLayer({ globeGroup, globeRadius, controls }) {
 
   // Runs conjunction screening (tracked satellites vs. the full catalog) off
   // the main thread — see conjunctionWorker.js. Module worker so it can
-  // `import` satellite.js and shared/conjunctionMath.js directly instead of
-  // carrying its own hand-synced (and, it turned out, version-drifted) copy.
-  const conjunctionWorker = new Worker(new URL("./conjunctionWorker.js", import.meta.url), { type: "module" });
+  // import a real satellite.js build rather than the stale UMD one the old
+  // classic worker was pinned to.
+  //
+  // The ?v= is a deliberate cache-buster, not decoration. GitHub Pages serves
+  // assets with Cache-Control: max-age=600, so for ~10min after a deploy a
+  // browser can run a FRESH satelliteDisplay.js against a STALE cached
+  // conjunctionWorker.js. The two have to agree on the worker type (module vs
+  // classic) and the message protocol, and when they don't the failure is an
+  // opaque "worker failed to load" with every satellite stuck on "Screening…"
+  // and no usable error message. Bump this whenever conjunctionWorker.js changes.
+  const WORKER_VERSION = "2";
+  const workerUrl = new URL("./conjunctionWorker.js", import.meta.url);
+  workerUrl.searchParams.set("v", WORKER_VERSION);
+  const conjunctionWorker = new Worker(workerUrl, { type: "module" });
   const conjunctionResults = new Map();
 
   conjunctionWorker.onerror = (event) => {

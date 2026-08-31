@@ -678,7 +678,7 @@ export function initSatelliteLayer({ globeGroup, globeRadius, controls }) {
   );
   setTooltip(
     "alerts-info-tooltip",
-    `Critical-risk close approaches from the backend's own catalog-wide scan — not limited to what you're tracking here.`
+    `Critical-risk close approaches from the backend's own catalog-wide scan, not limited to what you're tracking here.`
   );
 
   updateMinZoomDistance(); // sets the default floor before anything's tracked yet

@@ -1776,6 +1776,12 @@ body.explore-mode .satellite-panel {
   color: var(--text-dim);
 }
 
+.footer p.footer-note {
+  margin-top: 0.5rem;
+  font-size: 0.68rem;
+  opacity: 0.6;
+}
+
 @media (max-width: 640px) {
   .hero {
     padding: 6vh 8vw;

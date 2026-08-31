@@ -152,13 +152,13 @@ function renderChartSvg(series) {
 // thread.
 export function showDistanceChart({ trackedName, trackedNoradId, trackedSatrec, closeApproaches, findObjectByNoradId }) {
   const modal = ensureModal();
-  modal.querySelector(".distance-chart-title").textContent = `${trackedName} (#${trackedNoradId}) — distance over the next 5h`;
+  modal.querySelector(".distance-chart-title").textContent = `${trackedName} (#${trackedNoradId}): distance over the next 5h`;
 
   const body = modal.querySelector(".distance-chart-body");
   const legend = modal.querySelector(".distance-chart-legend");
 
   if (closeApproaches === undefined) {
-    body.innerHTML = `<p class="distance-chart-empty">Still screening this satellite — try again in a moment.</p>`;
+    body.innerHTML = `<p class="distance-chart-empty">Still screening this satellite. Try again in a moment.</p>`;
     legend.innerHTML = "";
     modal.classList.add("distance-chart-modal--open");
     return;

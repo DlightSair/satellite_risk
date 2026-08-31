@@ -1,0 +1,158 @@
+================================================================================
+ PRESENTATION SCRIPT
+ Space Debris Tracking & Satellite Collision Risk Prediction — PS-04, Group 6Gs
+================================================================================
+
+HOW TO USE
+----------
+- Written to be read roughly in order; each section is a standalone block you
+  can speak from without re-reading earlier ones.
+- A separate visual (see the architecture diagram artifact — plain white
+  background, box-and-arrow, titles only) is meant to go up on screen during
+  the ARCHITECTURE section below.
+- [SHOW] = what should be on screen at that moment.
+
+
+================================================================================
+1. PROBLEM STATEMENT
+================================================================================
+There are over 30,000 tracked objects in orbit right now — active satellites
+and debris — closing on each other at 7-8 kilometers a second. Real
+conjunction-assessment data exists (CelesTrak publishes it publicly), but
+turning that raw orbital data into "is anything I care about actually in
+danger right now" is locked inside institutional tools, spreadsheets, and
+manual review. There's no accessible way for a student, a small satellite
+operator, or a curious engineer to just open a tab, or get pinged, and know.
+
+Motivation: this is a problem of accessibility, not data availability. The
+orbital mechanics (SGP4/SDP4 propagation) are decades-old, well-understood,
+and open. What's missing is a system that continuously screens the full
+catalog, in the open, for free, and tells you the moment something crosses
+into real risk — without needing to know orbital mechanics yourself.
+
+
+================================================================================
+2. SOLUTION & ARCHITECTURE
+================================================================================
+[SHOW] Architecture diagram.
+
+We built a system with three parts that all read from the same source of
+truth:
+
+- A live 3D globe (Three.js/WebGPU) that propagates real satellite.js
+  SGP4/SDP4 positions for a ~19,000-object catalog, entirely in the browser —
+  track up to 8 objects at once, scrub up to 5 hours ahead, and see
+  distance-over-time plotted for any of them. This runs client-side and works
+  even if our backend is completely down.
+
+- A catalog-wide collision screening backend (Express on Vercel + Supabase)
+  that continuously scans the full catalog server-side — not just what one
+  person happens to be tracking in one tab — and exposes it as a public
+  GET /api/alerts endpoint, so anyone can pull the current critical-alert
+  feed and build on top of it without touching our code.
+
+- A Telegram bot (/watch, /unwatch, /list, /lookup, /alerts) that pushes a
+  message the instant something you're watching goes critical — no dashboard
+  required, no polling, works from your phone.
+
+What's unique here: most student projects stop at "here's a pretty globe."
+We built the part that actually matters operationally — a persistent,
+catalog-wide, server-side risk feed with a public API and a push-alert
+channel, and made sure it survives frontend downtime, backend downtime, and
+data-source downtime independently of each other.
+
+
+================================================================================
+3. PROBLEMS WE FACED — TIME & ALGORITHMS
+================================================================================
+[SHOW] Numbers/benchmarks, or just speak them.
+
+Full catalog-vs-catalog screening is an O(n²) problem — ~19,000 objects means
+~19,000² raw pairs. Naively propagating every object against every other
+object with SGP4 and searching for a minimum separation is far too slow to
+even consider at that scale.
+
+Algorithmic fix — altitude-band pre-filtering: before running the expensive
+propagation-and-search on any pair, we compute each object's perigee/apogee
+band directly from its TLE (no propagation needed) and skip the pair outright
+if the bands can't overlap within our screening radius — the same first-pass
+filter real conjunction-assessment systems (CARA/Socrates) use. This is what
+makes catalog-scale screening tractable at all instead of a mathematical
+non-starter.
+
+Even with that filter, one server-side scan is bounded by a 60-second
+serverless function limit. We first estimated ~37ms per target from local,
+JIT-warmed testing, and sized a batch of 400 targets per scan off that. In
+production, that batch measured 52.7 seconds for just 151 targets scanned —
+about 349ms per target, nearly 9x slower than the local estimate, and only
+~7 seconds under the timeout with no safety margin. We re-sized the batch to
+60 targets (~21 seconds of real scan time), leaving genuine headroom instead
+of risking a silent full-cycle failure.
+
+That safety-first batch size created a coverage problem: rotating 60 objects
+at a time through a ~16,000-object payload catalog, tied to a scan interval
+derived from wall-clock time, meant a full sweep of the catalog took 22 days
+— a satellite could go critical and our own alert feed wouldn't know for
+three weeks. We fixed this by replacing the wall-clock-derived rotation with
+a cursor persisted in the database, advanced by exactly one batch per
+successful scan, and added a dedicated 15-minute refresh cycle independent of
+the data-fetch cycle. Coverage time dropped from 22 days to under 3 days,
+with the same per-scan cost.
+
+For situations where 3 days still isn't fast enough — an active event,
+wanting current data right now — we built an on-demand full-catalog scan that
+runs locally, splitting the ~16,000 targets across one worker thread per CPU
+core instead of one request at a time. Single-threaded, that same scan took
+over 40 minutes. Parallelized across cores, it completed in 5.4 minutes — and
+in the process of actually running it at full scale for the first time, it
+surfaced 259 real critical-risk pairs that our rotation-based system had
+never gotten to yet, versus the roughly 2 that were visible before.
+
+That full-scale run also exposed a real bug: satellite.js's underlying SGP4
+propagator can return null outright on certain decayed or malformed orbits,
+not just return an object with an empty position — something the small
+60-object rotation slice in production had simply never hit, but a true
+19,000-object sweep hit constantly. We fixed the null-handling in our shared
+orbital-math module, the single source of truth both frontend and backend
+import, so both sides picked up the fix at once.
+
+
+================================================================================
+4. SPECIAL FEATURES & SUSTAINABILITY
+================================================================================
+- Runs entirely on free-tier infrastructure — GitHub Pages, Vercel, Supabase,
+  GitHub Actions — no ongoing cost to operate.
+- Self-healing data pipeline: a failed or partial CelesTrak fetch (below
+  10,000 objects, healthy is ~19,000) is rejected and never touches the live
+  data branch, so frontend, backend, and Telegram bot always agree on the
+  same last-known-good snapshot instead of drifting or crashing.
+- Scales with the catalog, not with users: tracking and propagation run in
+  each visitor's own browser, so the backend only ever carries the constant
+  cost of the always-on alert scan and the bot — adding users doesn't add
+  server load.
+- Public API (GET /api/alerts) means this isn't a closed dashboard — anyone
+  can pull the live critical-alert feed and build their own tool, notifier,
+  or research pipeline on top of it, for free.
+- Shared math module (shared/conjunctionMath.js) is the single source of
+  truth for both the frontend and backend — they can never silently disagree
+  about what counts as "critical."
+
+
+================================================================================
+5. WHAT'S LEFT / FUTURE WORK
+================================================================================
+- Full-catalog coverage is still bounded by serverless limits on the
+  always-on path — the local on-demand scan solves this for "right now," but
+  a hosted worker/queue (e.g. a small always-on background job) would close
+  that gap permanently without needing a manual trigger.
+- Risk scoring is currently miss-distance-based (a TLE-only proxy) — real
+  collision *probability* needs object size and covariance data, which isn't
+  in a TLE. A future version could ingest that where available for genuine
+  probability-of-collision scoring, not just a distance band.
+- No persistent user accounts yet — Telegram watch lists are per-chat only;
+  a proper account layer would let the same watchlist follow a user across
+  Telegram, the web dashboard, and a future API key.
+- CelesTrak occasionally rate-limits or blocks cloud/datacenter IP ranges
+  (including our own automation), which can delay a fetch cycle — a
+  secondary TLE source as fallback would remove that single point of
+  failure.

@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Space Debris Tracking &amp; Satellite Collision Risk Prediction — Group 6Gs</title>
+    <title>Space Debris Tracking &amp; Satellite Collision Risk Prediction | Group 6Gs</title>
     <meta
       name="description"
-      content="An interactive orbital-awareness system by Group 6Gs — tracking space debris and predicting satellite collision risk in real time."
+      content="An interactive orbital-awareness system by Group 6Gs, tracking space debris and predicting satellite collision risk in real time."
     />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -69,7 +69,7 @@
             <span>&amp; Satellite Collision Risk Prediction</span>
           </h1>
           <p class="hero-subtitle">
-            Watching Earth's orbital neighborhood in real time — and predicting
+            Watching Earth's orbital neighborhood in real time, and predicting
             collisions before they happen.
           </p>
           <button type="button" id="hero-explore-toggle" class="btn-primary hero-cta explore-toggle">
@@ -87,9 +87,9 @@
           <span class="section-tag">The Problem</span>
           <h2>Earth's orbit is getting crowded</h2>
           <p>
-            Decades of launches have left tens of thousands of tracked objects —
-            dead satellites, spent rocket stages, and fragments from past
-            collisions — circling the planet at thousands of kilometers per
+            Decades of launches have left tens of thousands of tracked objects
+            (dead satellites, spent rocket stages, and fragments from past
+            collisions) circling the planet at thousands of kilometers per
             hour. Every one of them is a potential threat to the active
             satellites we rely on for communication, navigation, and weather
             forecasting.
@@ -108,7 +108,7 @@
                 <p>
                   Search a live catalog of ~19,000 satellites and debris,
                   track up to 8 at once, and watch their SGP4-propagated
-                  positions update live — or fast-forward up to 5 hours to
+                  positions update live, or fast-forward up to 5 hours to
                   see where they'll be.
                 </p>
               </div>
@@ -146,7 +146,7 @@
                 <p>
                   Browse every close approach for each tracked satellite,
                   grouped by satellite, plus a live Alerts feed pulled
-                  straight from the backend's own catalog-wide scan —
+                  straight from the backend's own catalog-wide scan:
                   every Critical risk approach right now, not just the
                   ones you're tracking here.
                 </p>
@@ -160,7 +160,7 @@
                 <p>
                   Click the chart icon next to any tracked satellite to
                   plot its distance to each nearby object across the next
-                  5 hours — computed live in the browser, not a stored
+                  5 hours, computed live in the browser, not a stored
                   snapshot.
                 </p>
               </div>
@@ -176,7 +176,6 @@
             <li>satellite.js (SGP4/SDP4)</li>
             <li>Web Workers</li>
             <li>Node.js · Express · Vercel</li>
-            <li>Supabase · Telegram Bot API</li>
             <li>GitHub Actions</li>
           </ul>
         </section>
@@ -202,7 +201,7 @@
               Message
               <a href="https://t.me/space_debris_alert_bot" target="_blank" rel="noopener">@space_debris_alert_bot</a>
               to get pinged directly when a satellite you care about is
-              heading into a critical risk close approach — no need to
+              heading into a critical risk close approach, no need to
               keep this page open.
             </p>
             <ul class="help-command-list">
@@ -218,7 +217,7 @@
             <h3>API</h3>
             <p>
               The same data powering this site is available as a public
-              read API — no key required. Base URL:
+              read API, no key required. Base URL:
               <code>https://satellite-risk.vercel.app</code>
             </p>
             <ul class="help-command-list">
@@ -247,7 +246,8 @@
       </main>
 
       <footer class="footer">
-        <p>Group 6Gs — Space Debris Tracking &amp; Satellite Collision Risk Prediction</p>
+        <p>Group 6Gs · Space Debris Tracking &amp; Satellite Collision Risk Prediction</p>
+        <p class="footer-note">Alerts stored in Supabase and delivered via the Telegram Bot API.</p>
       </footer>
     </div>
 

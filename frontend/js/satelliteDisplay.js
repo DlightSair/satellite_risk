@@ -78,9 +78,10 @@ export function initSatelliteLayer({ globeGroup, globeRadius, controls }) {
   let lastPositionUpdate = 0;
 
   // Runs conjunction screening (tracked satellites vs. the full catalog) off
-  // the main thread — see conjunctionWorker.js. Classic (non-module) worker
-  // for Firefox <114 compatibility (module workers weren't supported before).
-  const conjunctionWorker = new Worker(new URL("./conjunctionWorker.js", import.meta.url));
+  // the main thread — see conjunctionWorker.js. Module worker so it can
+  // `import` satellite.js and shared/conjunctionMath.js directly instead of
+  // carrying its own hand-synced (and, it turned out, version-drifted) copy.
+  const conjunctionWorker = new Worker(new URL("./conjunctionWorker.js", import.meta.url), { type: "module" });
   const conjunctionResults = new Map();
 
   conjunctionWorker.onerror = (event) => {
